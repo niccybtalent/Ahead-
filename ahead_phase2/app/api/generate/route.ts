@@ -5,7 +5,9 @@ import { diagnosisSystemPrompt, diagnosisUserPrompt, DIAGNOSIS_PROMPT_VERSION } 
 import { curriculumSystemPrompt, curriculumUserPrompt, CURRICULUM_PROMPT_VERSION } from "@/lib/prompts/curriculum";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+// Two sequential Claude calls (up to 5k + 7k output tokens) routinely take
+// longer than 60s. Vercel's Fluid compute allows 300s on every plan, so use it.
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
