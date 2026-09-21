@@ -71,9 +71,10 @@ export default function ResultsClient() {
 
   const { diagnosis, curriculum } = plan;
   const strengths = diagnosis.strengths.slice(0, 4);
-  const gaps = [...diagnosis.capability_gaps].sort((a, b) => ({ high: 0, medium: 1, low: 2 }[a.priority] - ({ high: 0, medium: 1, low: 2 }[b.priority])).slice(0, 4);
-  const deprioritise = diagnosis.deprioritise.slice(0, 4);
-
+ const priorityRank = { high: 0, medium: 1, low: 2 } as const;
+const gaps = [...diagnosis.capability_gaps]
+  .sort((a, b) => priorityRank[a.priority] - priorityRank[b.priority])
+  .slice(0, 4);
   return (
     <main className="result-wrap">
       <section className="result-hero">
