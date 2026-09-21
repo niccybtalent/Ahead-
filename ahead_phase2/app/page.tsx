@@ -12,7 +12,7 @@ export default function HomePage() {
         <section className="hero">
           <div>
             <div className="eyebrow">✦ Personalised to your career</div>
-            <h1>Build the skills your <span className="gradient-text">next career</span> needs.</h1>
+            <h1>Build the skills that <span className="gradient-text">matter next</span>.</h1>
             <p>
               Tell us where you are, where you want to go and how you currently use AI.
               Ahead builds you a personalised 10-week programme around your actual career.
