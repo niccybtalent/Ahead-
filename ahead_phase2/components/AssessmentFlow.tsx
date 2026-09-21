@@ -94,7 +94,23 @@ export default function AssessmentFlow() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ assessment: answers }),
       });
-      const payload = await response.json();
+      // The server can reply with a non-JSON error page (for example a Vercel
+      // timeout), so read the body as text first and surface it usefully
+      // instead of failing with an opaque JSON parse error.
+      const body = await response.text();
+      let payload: { error?: string } & Record<string, unknown>;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        if (response.status === 504 || /timed? ?out/i.test(body)) {
+          throw new Error(
+            "The server timed out while building your plan. Your answers are saved — please press the button again."
+          );
+        }
+        throw new Error(
+          `The server returned an unexpected response (${response.status}). ${body.slice(0, 160)}`
+        );
+      }
       if (!response.ok) throw new Error(payload.error || "We couldn’t build your plan.");
       localStorage.setItem("aheadGeneratedPlan", JSON.stringify(payload));
       router.push("/results");
