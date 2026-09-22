@@ -15,6 +15,7 @@ export default function ResultsClient() {
   const [openWeek, setOpenWeek] = useState<number | null>(null);
   const [weeks, setWeeks] = useState<Record<number, WeekDetail>>({});
   const [weekBusy, setWeekBusy] = useState<number | null>(null);
+  const [weekStage, setWeekStage] = useState("");
   const [weekError, setWeekError] = useState<Record<number, string>>({});
 
   useEffect(() => {
@@ -39,29 +40,53 @@ export default function ResultsClient() {
 
     setWeekBusy(weekNumber);
     setWeekError((prev) => ({ ...prev, [weekNumber]: "" }));
-    try {
-      const response = await fetch("/api/week", {
+
+    // Read a response that may not be JSON (for example a platform timeout
+    // page), so the real cause surfaces instead of a parse error.
+    async function call<T>(url: string, payload: unknown, label: string): Promise<T> {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          week_number: weekNumber,
-          assessment,
-          diagnosis: plan.diagnosis,
-          curriculum: plan.curriculum,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = await response.text();
-      let detail: WeekDetail & { error?: string };
+      let parsed: T & { error?: string };
       try {
-        detail = JSON.parse(body);
+        parsed = JSON.parse(body);
       } catch {
         throw new Error(
           response.status === 504 || /timed? ?out/i.test(body)
-            ? "That took too long to build. Please try this week again."
-            : `The server returned an unexpected response (${response.status}).`
+            ? `${label} took too long. Please try this week again.`
+            : `The server returned an unexpected response (${response.status}) while ${label.toLowerCase()}.`
         );
       }
-      if (!response.ok) throw new Error(detail.error || "We couldn’t build this week.");
+      if (!response.ok) throw new Error(parsed.error || `We couldn’t finish ${label.toLowerCase()}.`);
+      return parsed;
+    }
+
+    try {
+      const base = {
+        week_number: weekNumber,
+        assessment,
+        diagnosis: plan.diagnosis,
+        curriculum: plan.curriculum,
+      };
+
+      // Split into two requests so neither half approaches the platform's
+      // function timeout.
+      setWeekStage("Searching for current resources…");
+      const research = await call<{ notes: string; verified: Array<{ url: string; title: string }> }>(
+        "/api/week/research",
+        base,
+        "The resource search"
+      );
+
+      setWeekStage("Shaping your sessions…");
+      const detail = await call<WeekDetail>(
+        "/api/week",
+        { ...base, notes: research.notes, verified: research.verified },
+        "Building the week"
+      );
 
       const next = { ...weeks, [weekNumber]: detail };
       setWeeks(next);
@@ -75,6 +100,7 @@ export default function ResultsClient() {
       }));
     } finally {
       setWeekBusy(null);
+      setWeekStage("");
     }
   }
 
@@ -201,7 +227,7 @@ export default function ResultsClient() {
                         <div className="loading-orb small" />
                         <div>
                           <strong>Building week {week.week_number}.</strong>
-                          <p>Searching for current resources, then shaping your sessions. This takes a minute or two.</p>
+                          <p>{weekStage || "Searching for current resources, then shaping your sessions."} This takes a minute or two.</p>
                         </div>
                       </div>
                     )}
