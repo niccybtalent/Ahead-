@@ -2,13 +2,20 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { AssessmentAnswers, GeneratedPlan } from "@/lib/types";
+import type { AssessmentAnswers, GeneratedPlan, WeekDetail } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import WeekDetailPanel from "@/components/WeekDetailPanel";
+
+const WEEK_CACHE_KEY = "aheadWeekDetails";
 
 export default function ResultsClient() {
   const [plan, setPlan] = useState<GeneratedPlan | null>(null);
   const [assessment, setAssessment] = useState<AssessmentAnswers | null>(null);
   const [saveState, setSaveState] = useState("");
+  const [openWeek, setOpenWeek] = useState<number | null>(null);
+  const [weeks, setWeeks] = useState<Record<number, WeekDetail>>({});
+  const [weekBusy, setWeekBusy] = useState<number | null>(null);
+  const [weekError, setWeekError] = useState<Record<number, string>>({});
 
   useEffect(() => {
     try {
@@ -16,8 +23,60 @@ export default function ResultsClient() {
       const storedAssessment = localStorage.getItem("aheadAssessment");
       if (storedPlan) setPlan(JSON.parse(storedPlan));
       if (storedAssessment) setAssessment(JSON.parse(storedAssessment));
+      const storedWeeks = localStorage.getItem(WEEK_CACHE_KEY);
+      if (storedWeeks) setWeeks(JSON.parse(storedWeeks));
     } catch {}
   }, []);
+
+  async function openWeekDetail(weekNumber: number) {
+    if (openWeek === weekNumber) {
+      setOpenWeek(null);
+      return;
+    }
+    setOpenWeek(weekNumber);
+    if (weeks[weekNumber] || weekBusy !== null) return;
+    if (!plan || !assessment) return;
+
+    setWeekBusy(weekNumber);
+    setWeekError((prev) => ({ ...prev, [weekNumber]: "" }));
+    try {
+      const response = await fetch("/api/week", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          week_number: weekNumber,
+          assessment,
+          diagnosis: plan.diagnosis,
+          curriculum: plan.curriculum,
+        }),
+      });
+      const body = await response.text();
+      let detail: WeekDetail & { error?: string };
+      try {
+        detail = JSON.parse(body);
+      } catch {
+        throw new Error(
+          response.status === 504 || /timed? ?out/i.test(body)
+            ? "That took too long to build. Please try this week again."
+            : `The server returned an unexpected response (${response.status}).`
+        );
+      }
+      if (!response.ok) throw new Error(detail.error || "We couldn’t build this week.");
+
+      const next = { ...weeks, [weekNumber]: detail };
+      setWeeks(next);
+      try {
+        localStorage.setItem(WEEK_CACHE_KEY, JSON.stringify(next));
+      } catch {}
+    } catch (error) {
+      setWeekError((prev) => ({
+        ...prev,
+        [weekNumber]: error instanceof Error ? error.message : "Something went wrong.",
+      }));
+    } finally {
+      setWeekBusy(null);
+    }
+  }
 
   async function savePlan() {
     if (!plan || !assessment) return;
@@ -109,15 +168,56 @@ export default function ResultsClient() {
           <button className="secondary-btn" onClick={savePlan}>{saveState || "Save my plan"}</button>
         </div>
         <div className="week-list">
-          {curriculum.weeks.map((week) => (
-            <div className="week-card" key={week.week_number}>
-              <div className="week-num">{String(week.week_number).padStart(2, "0")}</div>
-              <div><h3>{week.title}</h3><p>{week.why_this_matters_for_you}</p></div>
-              <div className="week-output"><strong>You’ll finish with</strong>{week.output}</div>
-            </div>
-          ))}
+          {curriculum.weeks.map((week) => {
+            const isOpen = openWeek === week.week_number;
+            const detail = weeks[week.week_number];
+            const busy = weekBusy === week.week_number;
+            const error = weekError[week.week_number];
+            return (
+              <div className={`week-block ${isOpen ? "open" : ""}`} key={week.week_number}>
+                <button
+                  className="week-card week-trigger"
+                  onClick={() => openWeekDetail(week.week_number)}
+                  aria-expanded={isOpen}
+                >
+                  <div className="week-num">{String(week.week_number).padStart(2, "0")}</div>
+                  <div>
+                    <h3>{week.title}</h3>
+                    <p>{week.why_this_matters_for_you}</p>
+                  </div>
+                  <div className="week-output">
+                    <strong>You’ll finish with</strong>
+                    {week.output}
+                    <span className="week-toggle">
+                      {busy ? "Building…" : detail ? (isOpen ? "Hide week ↑" : "Open week ↓") : "Build this week ↓"}
+                    </span>
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="week-panel">
+                    {busy && (
+                      <div className="week-loading">
+                        <div className="loading-orb small" />
+                        <div>
+                          <strong>Building week {week.week_number}.</strong>
+                          <p>Searching for current resources, then shaping your sessions. This takes a minute or two.</p>
+                        </div>
+                      </div>
+                    )}
+                    {error && <div className="error-box">{error}</div>}
+                    {detail && <WeekDetailPanel detail={detail} />}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div className="cta-row centre-row"><button className="primary-btn" onClick={() => alert("Next build: detailed Week 1 → day-by-day sessions + resource library.")}>Start Week 1 →</button></div>
+        <div className="cta-row centre-row">
+          <button className="primary-btn" onClick={() => openWeekDetail(1)}>
+            {weeks[1] ? "Open Week 1 →" : "Start Week 1 →"}
+          </button>
+        </div>
         <div className="footer-note">Generated with {plan.meta.model} · {plan.meta.diagnosis_prompt_version} · {plan.meta.curriculum_prompt_version}</div>
       </section>
     </main>
