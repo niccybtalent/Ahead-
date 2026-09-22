@@ -119,3 +119,97 @@ export const CURRICULUM_JSON_SCHEMA = {
     }
   }
 } as const;
+
+export const WeekRequestSchema = z.object({
+  week_number: z.number().int().min(1).max(10),
+  assessment: AssessmentSchema,
+  diagnosis: DiagnosisSchema,
+  curriculum: CurriculumSchema,
+});
+
+export const WeekDetailSchema = z.object({
+  week_number: z.number().int(),
+  title: z.string(),
+  intro: z.string(),
+  capability_focus: z.array(z.string()),
+  sessions: z.array(z.object({
+    day: z.number().int(),
+    title: z.string(),
+    minutes: z.number().int(),
+    focus: z.string(),
+    steps: z.array(z.string()),
+    done_when: z.string(),
+  })).min(1),
+  resources: z.array(z.object({
+    title: z.string(),
+    url: z.string(),
+    source: z.string(),
+    format: z.string().transform((v) => v.toLowerCase()).pipe(
+      z.enum(["course", "article", "video", "documentation", "tool", "book", "report"])
+    ),
+    cost: z.string().transform((v) => v.toLowerCase()).pipe(z.enum(["free", "freemium", "paid"])),
+    time_required: z.string(),
+    why_this_one: z.string(),
+    use_in_session: z.number().int().nullable(),
+  })),
+  deliverable: z.object({
+    brief: z.string(),
+    what_good_looks_like: z.array(z.string()),
+    how_to_use_it: z.string(),
+  }),
+  checkpoint: z.string(),
+});
+
+export const WEEK_DETAIL_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["week_number", "title", "intro", "capability_focus", "sessions", "resources", "deliverable", "checkpoint"],
+  properties: {
+    week_number: { type: "integer" },
+    title: { type: "string" },
+    intro: { type: "string" },
+    capability_focus: { type: "array", items: { type: "string" } },
+    sessions: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["day", "title", "minutes", "focus", "steps", "done_when"],
+        properties: {
+          day: { type: "integer" },
+          title: { type: "string" },
+          minutes: { type: "integer" },
+          focus: { type: "string" },
+          steps: { type: "array", items: { type: "string" } },
+          done_when: { type: "string" },
+        },
+      },
+    },
+    resources: {
+      type: "array",
+      items: {
+        type: "object", additionalProperties: false,
+        required: ["title", "url", "source", "format", "cost", "time_required", "why_this_one", "use_in_session"],
+        properties: {
+          title: { type: "string" },
+          url: { type: "string" },
+          source: { type: "string" },
+          format: { type: "string", enum: ["course", "article", "video", "documentation", "tool", "book", "report"] },
+          cost: { type: "string", enum: ["free", "freemium", "paid"] },
+          time_required: { type: "string" },
+          why_this_one: { type: "string" },
+          use_in_session: { type: ["integer", "null"] },
+        },
+      },
+    },
+    deliverable: {
+      type: "object", additionalProperties: false,
+      required: ["brief", "what_good_looks_like", "how_to_use_it"],
+      properties: {
+        brief: { type: "string" },
+        what_good_looks_like: { type: "array", items: { type: "string" } },
+        how_to_use_it: { type: "string" },
+      },
+    },
+    checkpoint: { type: "string" },
+  },
+} as const;

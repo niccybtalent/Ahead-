@@ -75,3 +75,45 @@ export type GeneratedPlan = {
     curriculum_prompt_version: string;
   };
 };
+
+export type WeekSession = {
+  day: number;
+  title: string;
+  minutes: number;
+  focus: string;
+  steps: string[];
+  done_when: string;
+};
+
+export type WeekResource = {
+  title: string;
+  url: string;
+  source: string;
+  format: "course" | "article" | "video" | "documentation" | "tool" | "book" | "report";
+  cost: "free" | "freemium" | "paid";
+  time_required: string;
+  why_this_one: string;
+  use_in_session: number | null;
+};
+
+export type WeekDetail = {
+  week_number: number;
+  title: string;
+  intro: string;
+  capability_focus: string[];
+  sessions: WeekSession[];
+  resources: WeekResource[];
+  deliverable: {
+    brief: string;
+    what_good_looks_like: string[];
+    how_to_use_it: string;
+  };
+  checkpoint: string;
+  meta: {
+    model: string;
+    prompt_version: string;
+    searched_at: string;
+    sources_considered: number;
+    resources_dropped: number;
+  };
+};
