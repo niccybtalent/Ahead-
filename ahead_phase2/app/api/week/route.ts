@@ -1,18 +1,16 @@
 import { NextResponse } from "next/server";
-import type Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 import { WeekRequestSchema, WeekDetailSchema, WEEK_DETAIL_JSON_SCHEMA } from "@/lib/schemas";
 import { getAnthropic, getAnthropicModel } from "@/lib/anthropic";
-import {
-  WEEK_PROMPT_VERSION,
-  weekResearchSystemPrompt,
-  weekResearchUserPrompt,
-  weekBuildSystemPrompt,
-  weekBuildUserPrompt,
-} from "@/lib/prompts/week";
+import { WEEK_PROMPT_VERSION, weekBuildSystemPrompt, weekBuildUserPrompt } from "@/lib/prompts/week";
 
 export const runtime = "nodejs";
-// Two calls: a web-search research pass, then a structured build pass.
 export const maxDuration = 300;
+
+const BuildRequestSchema = WeekRequestSchema.extend({
+  notes: z.string(),
+  verified: z.array(z.object({ url: z.string(), title: z.string() })).min(1),
+});
 
 /** Sessions per week, taken from what the person said they can actually do. */
 function sessionCountFrom(days: string | undefined) {
@@ -40,74 +38,32 @@ function canonical(url: string) {
   }
 }
 
+/**
+ * Phase B of week generation: turn verified research into the structured week.
+ *
+ * No tools here, so output_config.format is allowed. The model is given the
+ * verified URL list from the research call and may not use any other link.
+ */
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
-    const { week_number, assessment, diagnosis, curriculum } = WeekRequestSchema.parse(payload);
+    const { week_number, assessment, diagnosis, curriculum, notes, verified } =
+      BuildRequestSchema.parse(payload);
 
     const week = curriculum.weeks.find((w) => w.week_number === week_number);
     if (!week) {
-      return NextResponse.json(
-        { error: `Week ${week_number} is not in this programme.` },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: `Week ${week_number} is not in this programme.` }, { status: 400 });
     }
+
+    const allowed = new Map<string, { url: string; title: string }>();
+    for (const r of verified) allowed.set(canonical(r.url), r);
 
     const client = getAnthropic();
     const model = getAnthropicModel();
-    const sessionCount = sessionCountFrom(assessment.learning?.days);
-    const minutesPerSession = minutesFrom(assessment.learning?.minutes);
 
-    // ---- Phase A: research with real web search -------------------------
-    // No output_config here. Anthropic always turns citations on for web
-    // search, and citations are rejected alongside output_config.format.
-    const researchMessage = await client.messages.create({
+    const message = await client.messages.create({
       model,
-      max_tokens: 8000,
-      system: weekResearchSystemPrompt,
-      messages: [{ role: "user", content: weekResearchUserPrompt(assessment, diagnosis, week, curriculum) }],
-      tools: [
-        {
-          type: "web_search_20260318",
-          name: "web_search",
-          max_uses: 8,
-          user_location: { type: "approximate", country: "GB", timezone: "Europe/London" },
-        },
-      ],
-    });
-
-    // Harvest URLs from the search result blocks themselves. These are pages
-    // Anthropic actually retrieved, so they cannot be hallucinated.
-    const verified = new Map<string, { url: string; title: string }>();
-    let researchNotes = "";
-
-    for (const block of researchMessage.content as Anthropic.ContentBlock[]) {
-      if (block.type === "text") {
-        researchNotes += block.text + "\n";
-      } else if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
-        for (const result of block.content) {
-          if (result.type === "web_search_result" && result.url) {
-            verified.set(canonical(result.url), { url: result.url, title: result.title });
-          }
-        }
-      }
-    }
-
-    const verifiedList = [...verified.values()];
-    if (verifiedList.length === 0) {
-      return NextResponse.json(
-        {
-          error:
-            "We couldn't find live resources for this week just now. Please try again in a moment.",
-        },
-        { status: 502 }
-      );
-    }
-
-    // ---- Phase B: build the structured week ------------------------------
-    const buildMessage = await client.messages.create({
-      model,
-      max_tokens: 8000,
+      max_tokens: 6000,
       system: weekBuildSystemPrompt,
       messages: [
         {
@@ -116,26 +72,27 @@ export async function POST(request: Request) {
             assessment,
             diagnosis,
             week,
-            sessionCount,
-            minutesPerSession,
-            researchNotes.trim(),
-            verifiedList
+            sessionCountFrom(assessment.learning?.days),
+            minutesFrom(assessment.learning?.minutes),
+            notes,
+            verified
           ),
         },
       ],
       output_config: { format: { type: "json_schema", schema: WEEK_DETAIL_JSON_SCHEMA } },
     });
 
-    const textBlock = buildMessage.content.find((b) => b.type === "text");
+    const textBlock = message.content.find((b) => b.type === "text");
     if (!textBlock || textBlock.type !== "text") throw new Error("Claude returned no text block");
     const detail = WeekDetailSchema.parse(JSON.parse(textBlock.text));
 
-    // Final guard: a resource survives only if its URL was actually retrieved.
-    // This is what makes a dead or invented link structurally impossible.
+    // Final guard: a resource survives only if its URL was actually retrieved
+    // during research. This is what makes a dead or invented link structurally
+    // impossible rather than merely discouraged.
     const before = detail.resources.length;
     const resources = detail.resources
-      .filter((r) => verified.has(canonical(r.url)))
-      .map((r) => ({ ...r, url: verified.get(canonical(r.url))!.url }));
+      .filter((r) => allowed.has(canonical(r.url)))
+      .map((r) => ({ ...r, url: allowed.get(canonical(r.url))!.url }));
 
     return NextResponse.json({
       ...detail,
@@ -144,13 +101,13 @@ export async function POST(request: Request) {
         model,
         prompt_version: WEEK_PROMPT_VERSION,
         searched_at: new Date().toISOString(),
-        sources_considered: verifiedList.length,
+        sources_considered: verified.length,
         resources_dropped: before - resources.length,
       },
     });
   } catch (error) {
-    console.error("Ahead week generation failed", error);
-    const message = error instanceof Error ? error.message : "Unknown week generation error";
+    console.error("Ahead week build failed", error);
+    const message = error instanceof Error ? error.message : "Unknown week build error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
